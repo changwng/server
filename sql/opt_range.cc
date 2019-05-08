@@ -2543,10 +2543,8 @@ int SQL_SELECT::test_quick_select(THD *thd, key_map keys_to_use,
     double best_read_time= read_time;
 
     if (null_rejecting_conds)
-    {
       not_null_cond_tree= null_rejecting_conds->get_mm_tree(&param, 
-                                          &null_rejecting_conds);
-    }
+                                             &null_rejecting_conds);
 
     if (cond)
     {
@@ -2566,13 +2564,7 @@ int SQL_SELECT::test_quick_select(THD *thd, key_map keys_to_use,
           tree= NULL;
       }
     }
-    if (not_null_cond_tree)
-    {
-      if (!tree)
-        tree= not_null_cond_tree;
-      else
-        tree= tree_and(&param, tree, not_null_cond_tree);
-    }
+    tree= tree_and(&param, tree, not_null_cond_tree);
 
     /*
       Try to construct a QUICK_GROUP_MIN_MAX_SELECT.
@@ -4484,65 +4476,78 @@ inline void add_cond(THD *thd, Item **e1, Item *e2)
     NULL - No null rejecting conditions for the given table
 */
 
-void make_null_rejecting_conds(THD *thd, TABLE *table,
-                        DYNAMIC_ARRAY *keyuse_array, key_map *const_keys)
+void make_null_rejecting_conds(THD *thd, JOIN_TAB *tab,
+                               key_map *const_keys)
 {
   KEY *keyinfo;
   Item *cond= NULL;
   KEYUSE* keyuse;
+  TABLE *table= tab->table;
+
+  /*
+
+    No need to add NOT NULL condition for materialized derived tables
+    or materialized subqueries as we do not run the range optimizer
+    on their conditions
+  */
+
+  if (tab->table->is_filled_at_execution() ||
+      (tab->table->pos_in_table_list->derived &&
+       tab->table->pos_in_table_list->is_materialized_derived()))
+    return;
+
+  Field_map not_null_keypart_map;
 
   /*
     The null rejecting conds added will be on the keypart of a key, so for
     that we need the table to atleast have a key.
   */
-  if (!table->s->keys)
-    return ;
-  if (table->null_rejecting_conds)
+  if (!table->s->keys || table->null_rejecting_conds || !tab->keyuse)
     return;
 
-  for(uint i=0; i < keyuse_array->elements; i++)
+  for(keyuse= tab->keyuse; keyuse->table == table; keyuse++)
   {
-    keyuse= (KEYUSE*)dynamic_array_ptr(keyuse_array, i);
-    if (keyuse->table == table)
-    {
-      /*
-        No null rejecting conds for a hash key orr full-text keys
-      */
-      if (keyuse->key == MAX_KEY || keyuse->keypart == FT_KEYPART)
-        continue;
-      keyinfo= keyuse->table->key_info+keyuse->key;
-      Field *field= keyinfo->key_part[keyuse->keypart].field;
+    /*
+      No null rejecting conds for a hash key orr full-text keys
+    */
+    if (keyuse->key == MAX_KEY || keyuse->keypart == FT_KEYPART)
+      continue;
+    keyinfo= keyuse->table->key_info + keyuse->key;
+    Field *field= keyinfo->key_part[keyuse->keypart].field;
 
-      /*
-        No need to add null-rejecting condition if we have a
-        keyuse element as
-          - table.key.keypart= const
-          - (table.key.keypart= tbl.otherfield or table.key.keypart IS NULL)
-          - table.key.keypart IS NOT NULLABLE
-      */
+    if (not_null_keypart_map.is_set(field->field_index))
+      continue;
 
-      if (keyuse->val->const_item()
-          || !(keyuse->null_rejecting && field->maybe_null())
-          || keyuse->optimize & KEY_OPTIMIZE_REF_OR_NULL)
-        continue;
+    /*
+      No need to add null-rejecting condition if we have a
+      keyuse element as
+        - table.key.keypart= const
+        - (table.key.keypart= tbl.otherfield or table.key.keypart IS NULL)
+        - table.key.keypart IS NOT NULLABLE
+    */
 
-      Item_field *field_item= new (thd->mem_root)Item_field(thd, field);
-      Item* not_null_item= new (thd->mem_root)Item_func_isnotnull(thd,
-                                                             field_item);
+    if (keyuse->val->const_item() ||
+        !(keyuse->null_rejecting && field->maybe_null()) ||
+        keyuse->optimize & KEY_OPTIMIZE_REF_OR_NULL)
+      continue;
 
-      /*
-        adding the key to const keys as we have the condition
-        as key.keypart IS NOT NULL
-      */
+    Item_field *field_item= new (thd->mem_root)Item_field(thd, field);
+    Item* not_null_item= new (thd->mem_root)Item_func_isnotnull(thd, field_item);
 
-      const_keys->set_bit(keyuse->key);
-      not_null_item->fix_fields(thd, 0);
-      not_null_item->update_used_tables();
-      add_cond(thd, &cond, not_null_item);
-    }
+    /*
+      adding the key to const keys as we have the condition
+      as key.keypart IS NOT NULL
+    */
+
+    const_keys->set_bit(keyuse->key);
+    not_null_item->fix_fields(thd, 0);
+    not_null_item->update_used_tables();
+    add_cond(thd, &cond, not_null_item);
+    not_null_keypart_map.set_bit(field->field_index);
   }
+  DBUG_EXECUTE("where", print_where(cond, "Early Null Filtering",
+                                    QT_ORDINARY););
   table->null_rejecting_conds= cond;
-  return;
 }
 
 

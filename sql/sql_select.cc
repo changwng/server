@@ -4953,9 +4953,8 @@ make_join_statistics(JOIN *join, List<TABLE_LIST> &tables_list,
 
     s->table->cond_selectivity= 1.0;
 
-    make_null_rejecting_conds(join->thd, s->table,
-                              keyuse_array, &s->const_keys);
-    
+    make_null_rejecting_conds(join->thd, s, &s->const_keys);
+
     /*
       Perform range analysis if there are keys it could use (1). 
       Don't do range analysis for materialized subqueries (2).
@@ -5514,23 +5513,29 @@ add_key_field(JOIN *join,
     othertbl.field can be NULL, there will be no matches if othertbl.field 
     has NULL value.
 
-    The field KEY_FIELD::null_rejecting is set to TRUE if we have both
-    the left and right hand side of the equality are NULLABLE
+    The field KEY_FIELD::null_rejecting is set to TRUE if either
+    the left or the right hand side of the equality is NULLABLE
 
-    We use null_rejecting in add_not_null_conds() to add
-    'othertbl.field IS NOT NULL' to tab->select_cond.
+    null_rejecting is used
+      - by add_not_null_conds(), to add "othertbl.field IS NOT NULL" to
+        othertbl's tab->select_cond. (This is called "Early NULLs filtering")
 
-    We use null_rejecting in make_null_rejecting_conds() to add
-    tbl.keypart IS NOT NULL so we can do range analysis on this condition
-
+      - by make_null_rejecting_conds(), to provide range optimizer with
+        additional "tbl.keypart IS NOT NULL" condition.
   */
   {
     Item *real= (*value)->real_item();
-    if (((cond->functype() == Item_func::EQ_FUNC) ||
-         (cond->functype() == Item_func::MULT_EQUAL_FUNC)) &&
-        (((real->type() == Item::FIELD_ITEM) &&
-        ((Item_field*)real)->field->maybe_null())
-        ||(field->maybe_null())))
+    if ((
+         (cond->functype() == Item_func::EQ_FUNC) ||
+         (cond->functype() == Item_func::MULT_EQUAL_FUNC)
+        ) &&
+        (
+          (
+            (real->type() == Item::FIELD_ITEM) &&
+            ((Item_field*)real)->field->maybe_null()
+          ) ||
+          (field->maybe_null())
+        ))
       (*key_fields)->null_rejecting= true;
     else
       (*key_fields)->null_rejecting= false;
@@ -9995,10 +10000,11 @@ static bool create_ref_for_key(JOIN *join, JOIN_TAB *j,
       j->ref.items[i]=keyuse->val;		// Save for cond removal
       j->ref.cond_guards[i]= keyuse->cond_guard;
       Item *real= (keyuse->val)->real_item();
-      if (keyuse->null_rejecting && 
-        (real->type() == Item::FIELD_ITEM) &&
-        ((Item_field*)real)->field->maybe_null())
+      if (keyuse->null_rejecting &&
+          (real->type() == Item::FIELD_ITEM) &&
+          ((Item_field*)real)->field->maybe_null())
         j->ref.null_rejecting|= (key_part_map)1 << i;
+
       keyuse_uses_no_tables= keyuse_uses_no_tables && !keyuse->used_tables;
       /*
         Todo: we should remove this check for thd->lex->describe on the next

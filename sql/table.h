@@ -1345,8 +1345,8 @@ public:
   key_map keys_usable_for_splitting;
 
   /*
-   Null rejecting conds added for all tables so we can do range analysis
-   on these conditions
+    Null rejecting conditions added for a table. These are created
+    by ref/eq_ref access so these can be used by the range optimizer
   */
   Item* null_rejecting_conds;
 
