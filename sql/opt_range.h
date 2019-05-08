@@ -1731,6 +1731,8 @@ bool eq_ranges_exceeds_limit(RANGE_SEQ_IF *seq, void *seq_init_param,
 bool prune_partitions(THD *thd, TABLE *table, Item *pprune_cond);
 #endif
 void store_key_image_to_rec(Field *field, uchar *ptr, uint len);
+void make_null_rejecting_conds(THD *thd, TABLE *table,
+                          DYNAMIC_ARRAY *keyuse_array, key_map *const_keys);
 
 extern String null_string;
 
