@@ -4370,8 +4370,13 @@ protected:
   virtual int delete_table(const char *name);
 
 public:
-  bool check_table_binlog_row_based(bool binlog_row);
-
+  inline bool check_table_binlog_row_based(bool binlog_row);
+  inline void clear_cached_table_binlog_row_based_flag()
+  {
+    check_table_binlog_row_based_done= 0;
+    check_table_binlog_row_based_result= 0;
+  }
+private:
   /* Cache result to avoid extra calls */
   inline void mark_trx_read_write()
   {
