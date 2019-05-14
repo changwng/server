@@ -709,6 +709,22 @@ TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	TABLE_TYPE	ENGINE	VERSION	ROW_FORMAT	TABLE
 def	test	v	VIEW	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	VIEW
 drop table t1,t2;
 drop view v;
+#
+# MDEV-19407: Assertion `field->table->stats_is_read' failed in is_eits_usable
+#
+create table t1(pk int);
+insert into t1 values (4),(3);
+set @save_optimizer_use_condition_selectivity= @@optimizer_use_condition_selectivity;
+set @@optimizer_use_condition_selectivity= 4;
+set use_stat_tables='preferably';
+INSERT INTO t1 SELECT * FROM x;
+ERROR 42S02: Table 'test.x' doesn't exist
+CREATE TABLE t2 SELECT pk FROM t1 WHERE pk>2;
+select * from t2;
+pk
+4
+3
+drop table t1,t2;
 set @@optimizer_use_condition_selectivity= @save_optimizer_use_condition_selectivity;
 set @save_optimizer_switch=@@optimizer_switch;
 set use_stat_tables=@save_use_stat_tables;
